@@ -54,7 +54,7 @@ class MyApp extends StatelessWidget {
       valueListenable: AppStorage.themeModeNotifier,
       builder: (context, themeMode, _) {
         return MaterialApp.router(
-          title: '星环流动 OmniFlow',
+          title: '星环流动',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
           darkTheme: AppTheme.darkTheme,
