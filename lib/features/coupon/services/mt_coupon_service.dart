@@ -29,8 +29,8 @@ class MtCouponService {
   static const String csecVersion = '1.4.2';
 
   static const String userAgent =
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
-      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
+      '(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
   static const String _codeApi =
       'https://passport.meituan.com/api/account/userauth/code';
@@ -84,6 +84,9 @@ class MtCouponService {
       _runtime!.evaluate(
           'globalThis.module={exports:{}};globalThis.exports=globalThis.module.exports;');
 
+      // 自动保存新生成的设备指纹，保持设备身份稳定性
+      await _persistDeviceFingerprint();
+
       // 5. 注册高频预编译签名函数，避免重复解析构造闭包
       _runtime!.evaluate('''
         globalThis.__addParams = function(url) {
@@ -96,7 +99,9 @@ class MtCouponService {
           try {
             var rr = globalThis.__cliguard.signRequest(method, url, bodyHash);
             return JSON.stringify(rr || {});
-          } catch(e) { return '{}'; }
+          } catch(e) {
+            return JSON.stringify({ __err: String(e && e.stack ? e.stack : e) });
+          }
         };
       ''');
 
@@ -118,25 +123,30 @@ class MtCouponService {
 
   // ── 签名逻辑 ──────────────────────────────────────────────────────────
 
-  /// 生成带完整签名的请求头（自动保证初始化，带 mtgsig）
-  static Future<Map<String, String>> buildHeaders(
-    String url,
-    String bodyStr, {
+  /// 构建带完整签名的目标 URL 与请求头（追加安全公共参数并按真实 Method 计算 mtgsig）
+  static Future<({Uri uri, Map<String, String> headers})> buildSignedRequest({
+    required String method,
+    required String url,
+    required String body,
     String? token,
   }) async {
     await ensureInitialized();
 
-    final bytes = utf8.encode(bodyStr);
+    final bytes = utf8.encode(body);
     final slice = bytes.length > 16200 ? bytes.sublist(0, 16200) : bytes;
     final bodyHash = dcrypto.md5.convert(slice).toString();
 
+    // 1. 追加公共安全参数 (csecplatform / csecversion)
     final signedUrl = _addCommonParams(url);
-    final sigHeaders = _signRequest('GET', signedUrl, bodyHash);
+
+    // 2. 传入真实的 HTTP Method (POST/GET) 进行签名计算
+    final sigHeaders = _signRequest(method.toUpperCase(), signedUrl, bodyHash);
 
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Content-Length': '${bytes.length}',
       'User-Agent': userAgent,
+      'X-Requested-With': 'XMLHttpRequest',
       'Cache-Control': 'no-cache',
       'Accept': 'application/json, */*',
     };
@@ -144,7 +154,24 @@ class MtCouponService {
     if (token != null && token.isNotEmpty) {
       headers['token'] = token;
     }
-    return headers;
+
+    return (uri: Uri.parse(signedUrl), headers: headers);
+  }
+
+  /// 兼容旧调用获取请求头
+  static Future<Map<String, String>> buildHeaders(
+    String url,
+    String bodyStr, {
+    String method = 'GET',
+    String? token,
+  }) async {
+    final req = await buildSignedRequest(
+      method: method,
+      url: url,
+      body: bodyStr,
+      token: token,
+    );
+    return req.headers;
   }
 
   static String _addCommonParams(String url) {
@@ -171,8 +198,15 @@ class MtCouponService {
           'globalThis.__sign(${jsonEncode(method)}, ${jsonEncode(url)}, ${jsonEncode(bodyHash)})');
       final decoded = tryDecodeJson(res.stringResult);
       if (decoded == null) return const {};
+      if (decoded.containsKey('__err')) {
+        // ignore: avoid_print
+        print('[MtCouponService] sign error: ${decoded['__err']}');
+        return const {};
+      }
       return decoded.map((k, v) => MapEntry(k, v?.toString() ?? ''));
-    } catch (_) {
+    } catch (e) {
+      // ignore: avoid_print
+      print('[MtCouponService] eval error: $e');
       return const {};
     }
   }
@@ -193,10 +227,14 @@ class MtCouponService {
           '&code_challenge=$challenge'
           '&csecplatform=$csecPlatform'
           '&csecversion=$csecVersion';
-      final headers = await buildHeaders(url, '');
+      final req = await buildSignedRequest(
+        method: 'GET',
+        url: url,
+        body: '',
+      );
 
       final res = await http
-          .get(Uri.parse(url), headers: headers)
+          .get(req.uri, headers: req.headers)
           .timeout(const Duration(seconds: 20));
 
       final decoded = tryDecodeJson(res.body);
@@ -236,10 +274,14 @@ class MtCouponService {
             '&code_verifier=$_pkceVerifier'
             '&csecplatform=$csecPlatform'
             '&csecversion=$csecVersion';
-        final headers = await buildHeaders(url, '');
+        final req = await buildSignedRequest(
+          method: 'GET',
+          url: url,
+          body: '',
+        );
 
         final res = await http
-            .get(Uri.parse(url), headers: headers)
+            .get(req.uri, headers: req.headers)
             .timeout(const Duration(seconds: 15));
 
         final decoded = tryDecodeJson(res.body);
@@ -312,9 +354,38 @@ class MtCouponService {
     return false;
   }
 
-  // ── 领券业务 ──────────────────────────────────────────────────────────
+  // ── 领券与账号状态 ────────────────────────────────────────────────────
 
-  /// 领取优惠券
+  static const String _checkLoginUrl =
+      'https://click.meituan.com/cps/ai/product/checkLoginMtMiniProgram';
+
+  /// 校验账号 token 是否有效
+  static Future<bool> checkLoginStatus(String token) async {
+    try {
+      final body = jsonEncode(<String, dynamic>{
+        'clientSource': 'coupon-fusion-workbuddy',
+        'userParamDTO': <String, dynamic>{'token': token},
+      });
+      final req = await buildSignedRequest(
+        method: 'POST',
+        url: _checkLoginUrl,
+        body: body,
+      );
+      final res = await http
+          .post(req.uri, headers: req.headers, body: body)
+          .timeout(const Duration(seconds: 15));
+
+      final decoded = tryDecodeJson(res.body);
+      if (decoded == null) return false;
+      return decoded['code'] == 200 &&
+          decoded['success'] == true &&
+          decoded['data'] != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 领取优惠券（使用真实 POST 签名，请求 targetUrl 携带平台参数，使用 Mobile UA）
   static Future<IssueResult> issueCoupon(String token) async {
     try {
       final body = jsonEncode(<String, dynamic>{
@@ -322,11 +393,15 @@ class MtCouponService {
         'aiScene': defaultAiScene,
         'version': 2,
       });
-      final headers =
-          await buildHeaders(_couponUrl, body, token: token);
+      final req = await buildSignedRequest(
+        method: 'POST',
+        url: _couponUrl,
+        body: body,
+        token: token,
+      );
 
       final res = await http
-          .post(Uri.parse(_couponUrl), headers: headers, body: body)
+          .post(req.uri, headers: req.headers, body: body)
           .timeout(const Duration(seconds: 20));
 
       final decoded = tryDecodeJson(res.body);
@@ -384,6 +459,10 @@ class MtCouponService {
       if (decoded is! Map<String, dynamic>) return;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(prefsKeyDfpid, jsonSource);
+      if (_runtime != null) {
+        _runtime!.evaluate(
+            'globalThis.__mem[${jsonEncode(_infoPath)}] = ${jsonEncode(jsonSource)};');
+      }
     } catch (_) {}
   }
 

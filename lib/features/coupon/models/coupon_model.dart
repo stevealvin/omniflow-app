@@ -169,11 +169,25 @@ IssueResult parseIssueResponse(Map<String, dynamic> data) {
   };
 
   final entry = errorMap[code];
+  final String apiMsg = (data['msg'] as String?)?.trim() ?? '';
+  String displayMsg;
+
+  if (code == 1014) {
+    // 若服务端明确返回"发券失败"而非已领取，避免误导为已领过
+    if (apiMsg.isNotEmpty && !apiMsg.contains('领') && !apiMsg.contains('已')) {
+      displayMsg = '$apiMsg (错误码 1014: 安全校验或规则未通过)';
+    } else {
+      displayMsg = apiMsg.isNotEmpty ? apiMsg : (entry?[1] ?? '今天已经领取过，每天限领一次。');
+    }
+  } else {
+    displayMsg = entry?[1] ?? (apiMsg.isNotEmpty ? apiMsg : '错误码 $code: 未知');
+  }
+
   return IssueResult(
     ok: false,
     code: code,
     error: entry?[0] ?? 'UNKNOWN',
-    message: entry?[1] ?? '错误码 $code: ${data['msg'] ?? '未知'}',
+    message: displayMsg,
   );
 }
 
