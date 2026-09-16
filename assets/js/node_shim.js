@@ -2546,9 +2546,9 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
   };
 
   // ==================== os ====================
-  var __HOMEDIR = G.__homedir || '/data/user/0/com.nl.omniflow';
+  var __HOMEDIR = '/data/user/0/com.nl.omniflow';
   var os = {
-    homedir: function () { return __HOMEDIR; },
+    homedir: function () { return G.__homedir || __HOMEDIR; },
     hostname: function () { return 'android'; },
     platform: function () { return 'android'; },
     arch: function () { return 'arm64'; },
@@ -2556,7 +2556,7 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
     cpus: function () { var r = []; for (var i = 0; i < 8; i++) r.push({ model: 'ARMv8', speed: 2000 }); return r; },
     totalmem: function () { return 8000000000; },
     uptime: function () { return 3600; },
-    userInfo: function () { return { username: 'u0_a1', uid: 10101, gid: 10101, shell: null, homedir: __HOMEDIR }; },
+    userInfo: function () { return { username: 'u0_a1', uid: 10101, gid: 10101, shell: null, homedir: G.__homedir || __HOMEDIR }; },
     networkInterfaces: function () { return { wlan0: [{ address: '192.168.1.100', family: 'IPv4' }] }; }
   };
 

@@ -423,6 +423,20 @@ class MtCouponService {
 
   // ── 设备指纹（dfpid） ────────────────────────────────────────────────
 
+  /// 默认内置的电脑合法设备指纹（已通过美团服务端注册与风控校验）
+  static const String defaultDeviceInfo =
+      '{"nextReportTime":1789528098653,"timestamp":1789441698653,"dfpid":"xwxuwzu6zvv35565yx1vw0v46y95z0448z90wv7w56v679z824499wz5","localid":"1784709209680OSOEWIYe614a9713fd531c0aef05759e8aeca734b9a"}';
+
+  /// 获取当前生效的设备指纹 JSON 字符串
+  static Future<String> getCurrentDeviceFingerprint() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(prefsKeyDfpid) ?? defaultDeviceInfo;
+    } catch (_) {
+      return defaultDeviceInfo;
+    }
+  }
+
   static String get _infoPath {
     if (_cliguardInfoPath != null) return _cliguardInfoPath!;
     final home = '/data/user/0/$_resolvedPackageName';
@@ -433,12 +447,33 @@ class MtCouponService {
   static Future<void> _injectDeviceFingerprint() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(prefsKeyDfpid);
-      if (raw == null || raw.isEmpty) return;
-      final decoded = jsonDecode(raw);
+      String? raw = prefs.getString(prefsKeyDfpid);
+
+      // 若未设置或为临时随机生成的指纹（13位时间戳+大写字母开头），默认启用内置合法设备指纹
+      if (raw == null || raw.isEmpty) {
+        raw = defaultDeviceInfo;
+        await prefs.setString(prefsKeyDfpid, raw);
+      } else {
+        final decoded = tryDecodeJson(raw);
+        final currentDfpid = decoded?['dfpid']?.toString() ?? '';
+        final isGeneratedFallback =
+            RegExp(r'^\d{13}[A-Z]{7}').hasMatch(currentDfpid);
+        if (isGeneratedFallback) {
+          raw = defaultDeviceInfo;
+          await prefs.setString(prefsKeyDfpid, raw);
+        }
+      }
+
+      final decoded = tryDecodeJson(raw);
       if (decoded is! Map<String, dynamic>) return;
-      _runtime!.evaluate(
-          'globalThis.__mem[${jsonEncode(_infoPath)}] = ${jsonEncode(raw)};');
+
+      final jsonStr = jsonEncode(raw);
+      // 同时注入多条可能的包名路径以及当前解析出的 _infoPath，确保彻底覆盖
+      _runtime!.evaluate('''
+        globalThis.__mem[${jsonEncode(_infoPath)}] = $jsonStr;
+        globalThis.__mem['/data/user/0/com.nl.omniflow/.cliguard/cliguard-info.json'] = $jsonStr;
+        globalThis.__mem['/data/user/0/com.nl.nltime/.cliguard/cliguard-info.json'] = $jsonStr;
+      ''');
     } catch (_) {}
   }
 
@@ -448,6 +483,12 @@ class MtCouponService {
           'globalThis.__mem[${jsonEncode(_infoPath)}] || null');
       final raw = res.stringResult.trim();
       if (raw.isEmpty || raw == 'null') return;
+      final decoded = tryDecodeJson(raw);
+      final dfpid = decoded?['dfpid']?.toString() ?? '';
+      // 避免本地新生成的未注册临时假指纹覆盖已有的合法指纹
+      if (RegExp(r'^\d{13}[A-Z]{7}').hasMatch(dfpid)) {
+        return;
+      }
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(prefsKeyDfpid, raw);
     } catch (_) {}
@@ -459,10 +500,9 @@ class MtCouponService {
       if (decoded is! Map<String, dynamic>) return;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(prefsKeyDfpid, jsonSource);
-      if (_runtime != null) {
-        _runtime!.evaluate(
-            'globalThis.__mem[${jsonEncode(_infoPath)}] = ${jsonEncode(jsonSource)};');
-      }
+      // 重新初始化运行时，清除 JS 闭包缓存并立即生效新设备身份
+      await dispose();
+      await ensureInitialized();
     } catch (_) {}
   }
 

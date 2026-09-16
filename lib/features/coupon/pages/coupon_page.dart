@@ -215,7 +215,9 @@ class _CouponPageState extends State<CouponPage> {
 
   Future<void> _importDfpid() async {
     if (!mounted) return;
-    final controller = TextEditingController();
+    final current = await MtCouponService.getCurrentDeviceFingerprint();
+    if (!mounted) return;
+    final controller = TextEditingController(text: current);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -225,7 +227,7 @@ class _CouponPageState extends State<CouponPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              '可将电脑端 ~/.cliguard/cliguard-info.json 的内容粘贴至下方，继承常用设备身份。',
+              '已默认配置电脑端合法设备指纹。如需自定义，可将电脑端 ~/.cliguard/cliguard-info.json 内容粘贴至下方：',
               style: TextStyle(fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -242,6 +244,12 @@ class _CouponPageState extends State<CouponPage> {
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () {
+              controller.text = MtCouponService.defaultDeviceInfo;
+            },
+            child: const Text('重置为默认'),
+          ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
             child: const Text('取消'),
@@ -262,7 +270,7 @@ class _CouponPageState extends State<CouponPage> {
     }
     await MtCouponService.setDeviceFingerprintFromJson(raw);
     if (!mounted) return;
-    _snack('设备指纹已保存，下次登录时自动生效');
+    _snack('设备指纹已保存并立即生效');
   }
 
   // ── UI 布局 ──────────────────────────────────────────────────────────
