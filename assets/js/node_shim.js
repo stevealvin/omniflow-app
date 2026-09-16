@@ -2479,8 +2479,12 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
       var parts = [];
       var alg = String(algo).toLowerCase();
       return {
-        update: function (d) { parts.push(_bytesToU8(d)); return this; },
-        final: function () {
+        update: function (d, inEnc, outEnc) {
+          parts.push(_bytesToU8(d));
+          if (outEnc === 'hex' || outEnc === 'base64') return '';
+          return G.Buffer.alloc ? G.Buffer.alloc(0) : G.Buffer.from([]);
+        },
+        final: function (outEnc) {
           var total = 0, i;
           for (i = 0; i < parts.length; i++) total += parts[i].length;
           var plain = new Uint8Array(total), pos = 0;
@@ -2494,7 +2498,11 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
           } else {
             throw new Error('Unsupported cipher: ' + algo);
           }
-          return G.Buffer.from(_waToU8(enc.ciphertext));
+          var cipherBytes = _waToU8(enc.ciphertext);
+          var buf = G.Buffer.from(cipherBytes);
+          if (outEnc === 'hex') return buf.toString('hex');
+          if (outEnc === 'base64') return buf.toString('base64');
+          return buf;
         }
       };
     },
