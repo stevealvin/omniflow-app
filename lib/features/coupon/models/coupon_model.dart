@@ -173,12 +173,10 @@ IssueResult parseIssueResponse(Map<String, dynamic> data) {
   String displayMsg;
 
   if (code == 1014) {
-    // 若服务端明确返回"发券失败"而非已领取，避免误导为已领过
-    if (apiMsg.isNotEmpty && !apiMsg.contains('领') && !apiMsg.contains('已')) {
-      displayMsg = '$apiMsg (错误码 1014: 安全校验或规则未通过)';
-    } else {
-      displayMsg = apiMsg.isNotEmpty ? apiMsg : (entry?[1] ?? '今天已经领取过，每天限领一次。');
-    }
+    // 电脑端直接映射 1014 为"今天已经领取过，每天限领一次。"（美团服务端对今日已领统一返回 msg: "发券失败"）
+    displayMsg = (apiMsg.isNotEmpty && apiMsg != '发券失败')
+        ? '$apiMsg (错误码 1014)'
+        : (entry?[1] ?? '今天已经领取过，每天限领一次。');
   } else {
     displayMsg = entry?[1] ?? (apiMsg.isNotEmpty ? apiMsg : '错误码 $code: 未知');
   }

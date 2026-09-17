@@ -2531,18 +2531,19 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
 
   // ==================== fs（内存版） ====================
   var __mem = G.__mem || (G.__mem = {});
+  function _normP(p) { return String(p).replace(/\\/g, '/'); }
   var fs = {
-    readFileSync: function (p) { if (__mem[p] !== undefined) return __mem[p]; throw new Error('ENOENT: ' + p); },
-    writeFileSync: function (p, d) { __mem[p] = String(d); },
-    existsSync: function (p) { return __mem[p] !== undefined; },
+    readFileSync: function (p) { p = _normP(p); if (__mem[p] !== undefined) return __mem[p]; throw new Error('ENOENT: ' + p); },
+    writeFileSync: function (p, d) { __mem[_normP(p)] = String(d); },
+    existsSync: function (p) { return __mem[_normP(p)] !== undefined; },
     mkdirSync: function () {},
     readdirSync: function () { return []; },
     statSync: function () { return { isFile: function () { return true; }, size: 1 }; },
     openSync: function () { return 1; },
     writeSync: function () {},
     closeSync: function () {},
-    renameSync: function (a, b) { if (__mem[a] !== undefined) { __mem[b] = __mem[a]; delete __mem[a]; } },
-    unlinkSync: function (p) { delete __mem[p]; }
+    renameSync: function (a, b) { a = _normP(a); b = _normP(b); if (__mem[a] !== undefined) { __mem[b] = __mem[a]; delete __mem[a]; } },
+    unlinkSync: function (p) { delete __mem[_normP(p)]; }
   };
 
   // ==================== os ====================
@@ -2602,23 +2603,92 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
 
   // ==================== URL / URLSearchParams ====================
   if (typeof G.URL === 'undefined') {
-    function URLSearchParamsP(init) {
-      this._map = {};
+    function URLSearchParamsP(init, urlOwner) {
+      this._owner = urlOwner;
+      this._map = [];
       if (typeof init === 'string') {
         var q = init.replace(/^\?/, '');
-        if (q) { var pairs = q.split('&'); for (var i = 0; i < pairs.length; i++) { var kv = pairs[i].split('='); var k = decodeURIComponent(kv[0]); var v = kv.length > 1 ? decodeURIComponent(kv[1]) : ''; (this._map[k] = this._map[k] || []).push(v); } }
+        if (q) {
+          var pairs = q.split('&');
+          for (var i = 0; i < pairs.length; i++) {
+            var kv = pairs[i].split('=');
+            var k = decodeURIComponent(kv[0].replace(/\+/g, ' '));
+            var v = kv.length > 1 ? decodeURIComponent(kv.slice(1).join('=').replace(/\+/g, ' ')) : '';
+            this._map.push([k, v]);
+          }
+        }
       }
     }
     URLSearchParamsP.prototype = {
-      get: function (k) { return this._map[k] ? this._map[k][0] : null; },
-      getAll: function (k) { return this._map[k] || []; },
-      has: function (k) { return !!this._map[k]; },
-      append: function (k, v) { (this._map[k] = this._map[k] || []).push(String(v)); },
-      set: function (k, v) { this._map[k] = [String(v)]; },
-      toString: function () { var parts = []; for (var k in this._map) for (var i = 0; i < this._map[k].length; i++) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(this._map[k][i])); return parts.join('&'); }
+      get: function (k) {
+        for (var i = 0; i < this._map.length; i++) {
+          if (this._map[i][0] === k) return this._map[i][1];
+        }
+        return null;
+      },
+      getAll: function (k) {
+        var res = [];
+        for (var i = 0; i < this._map.length; i++) {
+          if (this._map[i][0] === k) res.push(this._map[i][1]);
+        }
+        return res;
+      },
+      has: function (k) {
+        for (var i = 0; i < this._map.length; i++) {
+          if (this._map[i][0] === k) return true;
+        }
+        return false;
+      },
+      append: function (k, v) {
+        this._map.push([String(k), String(v)]);
+      },
+      set: function (k, v) {
+        var key = String(k);
+        var val = String(v);
+        var replaced = false;
+        var newMap = [];
+        for (var i = 0; i < this._map.length; i++) {
+          if (this._map[i][0] === key) {
+            if (!replaced) {
+              newMap.push([key, val]);
+              replaced = true;
+            }
+          } else {
+            newMap.push(this._map[i]);
+          }
+        }
+        if (!replaced) newMap.push([key, val]);
+        this._map = newMap;
+      },
+      delete: function (k) {
+        this._map = this._map.filter(function (item) { return item[0] !== k; });
+      },
+      toString: function () {
+        var parts = [];
+        for (var i = 0; i < this._map.length; i++) {
+          parts.push(encodeURIComponent(this._map[i][0]) + '=' + encodeURIComponent(this._map[i][1]));
+        }
+        return parts.join('&');
+      }
     };
     G.URLSearchParams = URLSearchParamsP;
-    function URLP(url) {
+
+    function URLP(url, base) {
+      if (base) {
+        var baseStr = String(base);
+        var urlStr = String(url);
+        if (!urlStr.startsWith('http://') && !urlStr.startsWith('https://')) {
+          var bMatch = baseStr.match(/^(https?):\/\/([^/?#]+)(\/[^?#]*)?/);
+          if (bMatch) {
+            if (urlStr.startsWith('/')) {
+              url = bMatch[1] + '://' + bMatch[2] + urlStr;
+            } else {
+              var basePath = (bMatch[3] || '/').replace(/\/[^/]*$/, '/');
+              url = bMatch[1] + '://' + bMatch[2] + basePath + urlStr;
+            }
+          }
+        }
+      }
       url = String(url);
       var m = url.match(/^(https?):\/\/([^/?#]+)([^?#]*)(\?[^#]*)?(#.*)?$/);
       if (!m) throw new TypeError('Invalid URL');
@@ -2627,11 +2697,44 @@ c.mode.CTRGladman=function(){var t=c.lib.BlockCipherMode.extend();function e(t){
       this.hostname = m[2].split(':')[0];
       this.port = m[2].includes(':') ? m[2].split(':')[1] : '';
       this.pathname = m[3] || '/';
-      this.search = m[4] || '';
       this.hash = m[5] || '';
-      this.searchParams = new URLSearchParamsP(this.search);
-      Object.defineProperty(this, 'href', { get: function () { return this.protocol + '//' + this.host + this.pathname + this.search + this.hash; } });
+      this.searchParams = new URLSearchParamsP(m[4] || '', this);
     }
+    Object.defineProperty(URLP.prototype, 'search', {
+      get: function () {
+        var q = this.searchParams.toString();
+        return q ? ('?' + q) : '';
+      },
+      set: function (val) {
+        this.searchParams = new URLSearchParamsP(val, this);
+      }
+    });
+    Object.defineProperty(URLP.prototype, 'origin', {
+      get: function () {
+        return this.protocol + '//' + this.host;
+      }
+    });
+    Object.defineProperty(URLP.prototype, 'href', {
+      get: function () {
+        return this.protocol + '//' + this.host + this.pathname + this.search + this.hash;
+      },
+      set: function (val) {
+        var u = new URLP(val);
+        this.protocol = u.protocol;
+        this.host = u.host;
+        this.hostname = u.hostname;
+        this.port = u.port;
+        this.pathname = u.pathname;
+        this.hash = u.hash;
+        this.searchParams = u.searchParams;
+      }
+    });
+    URLP.prototype.toString = function () {
+      return this.href;
+    };
+    URLP.prototype.toJSON = function () {
+      return this.href;
+    };
     G.URL = URLP;
   }
 

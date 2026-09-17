@@ -26,7 +26,7 @@ class MtCouponService {
   static const String defaultAiScene = 'a0d4da77f918ab204d86c911fcdd0ce1';
   static const String clientId = 'c6f50b5a1e2f4e2bb00a3e2f58df3ced';
   static const String csecPlatform = '7';
-  static const String csecVersion = '1.4.2';
+  static const String csecVersion = '1.3.1';
 
   static const String userAgent =
       'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 '
@@ -78,7 +78,7 @@ class MtCouponService {
       // 3. 注入已持久化的设备指纹
       await _injectDeviceFingerprint();
 
-      // 4. 加载 cliguard 1.4.2 签名核心库
+      // 4. 加载 cliguard 1.3.1 签名核心库 (与电脑端 helper 严格对齐)
       _evalCjs(await rootBundle.loadString('assets/js/cliguard.js'));
       _runtime!.evaluate('globalThis.__cliguard = globalThis.module.exports;');
       _runtime!.evaluate(
@@ -147,8 +147,6 @@ class MtCouponService {
       'Content-Length': '${bytes.length}',
       'User-Agent': userAgent,
       'X-Requested-With': 'XMLHttpRequest',
-      'Cache-Control': 'no-cache',
-      'Accept': 'application/json, */*',
     };
     headers.addAll(sigHeaders);
     if (token != null && token.isNotEmpty) {
